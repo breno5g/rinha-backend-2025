@@ -7,13 +7,18 @@ import (
 
 	"github.com/breno5g/rinha-back-2025/config"
 	"github.com/breno5g/rinha-back-2025/internal/entity"
+	"github.com/breno5g/rinha-back-2025/internal/service"
 	"github.com/google/uuid"
 )
 
-type PaymentController struct{}
+type PaymentController struct {
+	svc service.PaymentService
+}
 
-func NewPaymentController() *PaymentController {
-	return &PaymentController{}
+func NewPaymentController(svc service.PaymentService) *PaymentController {
+	return &PaymentController{
+		svc,
+	}
 }
 
 func (p *PaymentController) Create(w http.ResponseWriter, r *http.Request) {
@@ -42,5 +47,12 @@ func (p *PaymentController) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(req)
+	err = p.svc.AddToQueue(r.Context(), req)
+	if err != nil {
+		logger.Errorf("Failed to add payment to queue: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }
