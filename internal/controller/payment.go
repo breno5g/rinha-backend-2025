@@ -34,9 +34,8 @@ func (p *PaymentController) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := uuid.Parse(req.CorrelationId)
-	if err != nil {
-		logger.Errorf("Invalid correlationId: %v", err)
+	if req.CorrelationId == uuid.Nil {
+		logger.Errorf("Invalid correlationId: %v", req.CorrelationId)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -47,7 +46,7 @@ func (p *PaymentController) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = p.svc.AddToQueue(r.Context(), req)
+	err := p.svc.AddToQueue(r.Context(), req)
 	if err != nil {
 		logger.Errorf("Failed to add payment to queue: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
