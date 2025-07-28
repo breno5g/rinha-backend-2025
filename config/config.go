@@ -32,7 +32,8 @@ func GetDB() *redis.Client {
 	return db
 }
 
-func GetLogger() *Logger {
+func GetLogger(prefix string) *Logger {
+	logger = NewLogger(prefix)
 	return logger
 }
 
