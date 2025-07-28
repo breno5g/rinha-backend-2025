@@ -1,12 +1,14 @@
 package main
 
 import (
-	"fmt"
+	"net/http"
 
-	"github.com/breno5g/rinha-back-2025/config"
+	"github.com/breno5g/rinha-back-2025/internal/routes"
 )
 
 func main() {
-	config.Init()
-	fmt.Println("Hello, World!")
+	// config.Init()
+
+	mux := routes.Init()
+	http.ListenAndServe(":8080", mux)
 }
