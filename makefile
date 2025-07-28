@@ -38,4 +38,4 @@ env:
 
 dev:
 	@echo ">> Starting development environment with Docker Compose..."
-	@docker-compose up --build --remove-orphans --force-recreate -d
+	@docker-compose -f docker-compose.local.yml up --build --remove-orphans --force-recreate -d
