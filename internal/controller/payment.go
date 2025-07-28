@@ -8,6 +8,7 @@ import (
 	"github.com/breno5g/rinha-back-2025/config"
 	"github.com/breno5g/rinha-back-2025/internal/entity"
 	"github.com/breno5g/rinha-back-2025/internal/service"
+	"github.com/breno5g/rinha-back-2025/internal/utils"
 	"github.com/google/uuid"
 )
 
@@ -54,4 +55,21 @@ func (p *PaymentController) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (p *PaymentController) GetSummary(w http.ResponseWriter, r *http.Request) {
+	logger := config.GetLogger("Get Payment Summary")
+
+	from := utils.ParseTime(r.URL.Query().Get("from"))
+	to := utils.ParseTime(r.URL.Query().Get("to"))
+
+	summary, err := p.svc.GetSummary(r.Context(), from, to)
+	if err != nil {
+		logger.Errorf("Failed to get summary: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
 }

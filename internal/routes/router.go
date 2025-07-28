@@ -17,9 +17,7 @@ func Init() *http.ServeMux {
 	controller := controller.NewPaymentController(service)
 
 	mux.HandleFunc("/payments", controller.Create)
-	mux.HandleFunc("/payments-summary", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello, World!"))
-	})
+	mux.HandleFunc("/payments-summary", controller.GetSummary)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	})

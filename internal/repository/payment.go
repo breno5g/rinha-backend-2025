@@ -10,6 +10,8 @@ import (
 
 type PaymentRepository interface {
 	AddToQueue(ctx context.Context, payment []byte) error
+	Save(ctx context.Context, payment entity.Payment) error
+	GetAll(ctx context.Context) ([]entity.Payment, error)
 }
 
 type paymentRepository struct {
