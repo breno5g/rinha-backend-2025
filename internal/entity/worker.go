@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/breno5g/rinha-back-2025/config"
+	"github.com/breno5g/rinha-back-2025/internal/health"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
 	"github.com/valyala/fasthttp"
@@ -18,16 +19,17 @@ type PaymentRepository interface {
 }
 
 type Worker struct {
-	Client    *redis.Client
-	Repo      PaymentRepository
-	WorkerNum int
-	Fetcher   *fasthttp.Client
+	Client        *redis.Client
+	Repo          PaymentRepository
+	WorkerNum     int
+	Fetcher       *fasthttp.Client
+	HealthChecker *health.HealthChecker
 }
 
 const (
-	maxRetries     = 5
-	retryInterval  = 500 * time.Millisecond
-	requestTimeout = 5 * time.Second
+	fastRetryAttempts = 3
+	fastRetryDelay    = 100 * time.Millisecond
+	requestTimeout    = 5 * time.Second
 )
 
 func (w *Worker) Init(ctx context.Context) {
@@ -53,7 +55,7 @@ func (w *Worker) Init(ctx context.Context) {
 		}
 
 		if !w.processPayment(ctx, payment) {
-			logger.Warningf("Failed to process payment %s after all retries. Moving to dead-letter queue.", payment.CorrelationId)
+			logger.Warningf("CRITICAL: Payment %s failed on BOTH processors. Moving to dead-letter queue.", payment.CorrelationId)
 			w.Client.LPush(ctx, "payments:dead-letter", result)
 		}
 
@@ -62,8 +64,7 @@ func (w *Worker) Init(ctx context.Context) {
 }
 
 func (w *Worker) processPayment(ctx context.Context, payment Payment) bool {
-	defaultURL := config.GetEnv().DefaultURL
-	fallbackURL := config.GetEnv().FallbackURL
+	env := config.GetEnv()
 
 	payload, _ := json.Marshal(map[string]any{
 		"correlationId": payment.CorrelationId.String(),
@@ -71,16 +72,40 @@ func (w *Worker) processPayment(ctx context.Context, payment Payment) bool {
 		"requestedAt":   payment.RequestedAt.Format(time.RFC3339Nano),
 	})
 
-	for range maxRetries {
-		if w.tryProcessor(ctx, defaultURL, payload, "default", payment) {
-			return true
-		}
-		time.Sleep(retryInterval)
+	var primaryURL, secondaryURL string
+	var primaryProcessor, secondaryProcessor string
+
+	if !w.HealthChecker.Default.IsFailing.Load() {
+		primaryURL, primaryProcessor = env.DefaultURL, "default"
+		secondaryURL, secondaryProcessor = env.FallbackURL, "fallback"
+	} else {
+		primaryURL, primaryProcessor = env.FallbackURL, "fallback"
+		secondaryURL, secondaryProcessor = env.DefaultURL, "default"
 	}
 
-	return w.tryProcessor(ctx, fallbackURL, payload, "fallback", payment)
+	if w.attemptWithRetries(ctx, primaryURL, payload, primaryProcessor, payment) {
+		return true
+	}
+
+	if w.attemptWithRetries(ctx, secondaryURL, payload, secondaryProcessor, payment) {
+		return true
+	}
+
+	return false
 }
 
+// attemptWithRetries é um helper que encapsula o loop de retentativas rápidas.
+func (w *Worker) attemptWithRetries(ctx context.Context, url string, payload []byte, processor string, payment Payment) bool {
+	for i := 0; i < fastRetryAttempts; i++ {
+		if w.tryProcessor(ctx, url, payload, processor, payment) {
+			return true
+		}
+		time.Sleep(fastRetryDelay)
+	}
+	return false
+}
+
+// tryProcessor realiza uma ÚNICA tentativa de chamada HTTP.
 func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, processor string, payment Payment) bool {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
@@ -98,8 +123,12 @@ func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, p
 
 	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
 		payment.Processor = processor
-		w.Repo.SaveProcessedPayment(ctx, payment)
+		if err := w.Repo.SaveProcessedPayment(ctx, payment); err != nil {
+			config.GetLogger("Worker").Errorf("CRITICAL: Failed to save processed payment %s: %v", payment.CorrelationId, err)
+			return true
+		}
 		return true
 	}
+
 	return false
 }

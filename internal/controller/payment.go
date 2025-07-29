@@ -24,7 +24,6 @@ func NewPaymentController(svc service.PaymentService) *PaymentController {
 	}
 }
 
-// parseTime foi movido para cá como uma função auxiliar privada.
 func parseTime(param []byte) *time.Time {
 	if len(param) == 0 {
 		return nil

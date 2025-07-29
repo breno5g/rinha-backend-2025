@@ -7,6 +7,7 @@ import (
 	"github.com/breno5g/rinha-back-2025/config"
 	"github.com/breno5g/rinha-back-2025/internal/controller"
 	"github.com/breno5g/rinha-back-2025/internal/entity"
+	"github.com/breno5g/rinha-back-2025/internal/health"
 	"github.com/breno5g/rinha-back-2025/internal/repository"
 	"github.com/breno5g/rinha-back-2025/internal/service"
 	routing "github.com/qiangxue/fasthttp-routing"
@@ -15,6 +16,7 @@ import (
 
 func Init() *routing.Router {
 	db := config.GetDB()
+	env := config.GetEnv()
 	repo := repository.NewPaymentRepository(db)
 	svc := service.NewPaymentService(repo)
 	ctrl := controller.NewPaymentController(svc)
@@ -31,12 +33,17 @@ func Init() *routing.Router {
 		}).Dial,
 	}
 
-	for i := 0; i < config.GetEnv().MaxWorkers; i++ {
+	healthChecker := health.NewHealthChecker(fetcher, env.DefaultURL, env.FallbackURL)
+	go healthChecker.Monitor(context.Background(), "default")
+	go healthChecker.Monitor(context.Background(), "fallback")
+
+	for i := 0; i < env.MaxWorkers; i++ {
 		worker := &entity.Worker{
-			Client:    db,
-			Repo:      repo,
-			WorkerNum: i,
-			Fetcher:   fetcher,
+			Client:        db,
+			Repo:          repo,
+			WorkerNum:     i,
+			Fetcher:       fetcher,
+			HealthChecker: healthChecker,
 		}
 		go worker.Init(context.Background())
 	}

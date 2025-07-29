@@ -17,7 +17,7 @@ func InitEnv() (*conf, error) {
 
 	viper.SetDefault("DEFAULT_URL", "http://localhost:8001/payments")
 	viper.SetDefault("FALLBACK_URL", "http://localhost:8002/payments")
-	viper.SetDefault("MAX_WORKERS", 5)
+	viper.SetDefault("MAX_WORKERS", 25)
 	viper.SetDefault("PORT", 8080)
 	viper.SetDefault("REDIS_URL", "localhost:6379")
 
