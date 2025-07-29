@@ -3,3 +3,5 @@ Projeto para participar da [rinha-de-backend-2025](https://github.com/zanfrances
 
 - Go 1.23.0
 - Redis 7
+
+> Tá zuado, mas é trabalho honesto
