@@ -14,7 +14,7 @@ func Init() {
 	var err error
 	logger := NewLogger("Config")
 
-	env, err = InitEnv(".")
+	env, err = InitEnv()
 	if err != nil {
 		logger.Error("Error loading environment variables", err)
 		panic(err)

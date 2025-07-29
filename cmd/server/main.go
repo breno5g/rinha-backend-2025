@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/breno5g/rinha-back-2025/config"
@@ -12,6 +13,7 @@ func main() {
 
 	mux := routes.Init()
 	logger := config.GetLogger("Main")
-	logger.Info("Running server")
-	http.ListenAndServe(":8080", mux)
+	port := fmt.Sprintf(":%d", config.GetEnv().Port)
+	logger.Info("Running server on port: " + port)
+	http.ListenAndServe(port, mux)
 }
