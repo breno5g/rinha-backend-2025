@@ -28,21 +28,11 @@ const (
 	retryDelay    = time.Second
 	maxRetries    = 5
 	retryInterval = 500 * time.Millisecond
-	httpTimeout   = 5 * time.Second
 )
 
 func (w *Worker) Init(ctx context.Context) {
 	logger := config.GetLogger("Payment workers")
 	processingQueue := fmt.Sprintf("payments:processing:%d", w.WorkerNum)
-	w.Fetcher = &http.Client{
-		Timeout: httpTimeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     30 * retryDelay,
-			DisableKeepAlives:   false,
-		},
-	}
 
 	for {
 		result, err := w.Client.RPopLPush(ctx, "payments:queue", processingQueue).Result()

@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/breno5g/rinha-back-2025/config"
 	"github.com/breno5g/rinha-back-2025/internal/controller"
@@ -18,8 +19,18 @@ func Init() *http.ServeMux {
 	service := service.NewPaymentService(repository)
 	controller := controller.NewPaymentController(service)
 
+	fetcher := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 5,
+			IdleConnTimeout:     30 * time.Second,
+			DisableKeepAlives:   false,
+		},
+	}
+
 	for i := 0; i < config.GetEnv().MaxWorkers; i++ {
-		worker := &entity.Worker{Client: db, Repo: repository, WorkerNum: i}
+		worker := &entity.Worker{Client: db, Repo: repository, WorkerNum: i, Fetcher: fetcher}
 		go worker.Init(context.Background())
 	}
 
