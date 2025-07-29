@@ -39,7 +39,7 @@ func (w *Worker) Init(ctx context.Context) {
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     15 * retryDelay,
+			IdleConnTimeout:     30 * retryDelay,
 			DisableKeepAlives:   false,
 		},
 	}
@@ -94,10 +94,7 @@ func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, p
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
 
-	logger := config.GetLogger("Payment workers")
-
 	resp, err := w.Fetcher.Do(req)
-	logger.Debugf("URL: %v, Status: %v", url, resp.StatusCode)
 	if err != nil {
 		return false
 	}
