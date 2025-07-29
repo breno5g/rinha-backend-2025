@@ -2,7 +2,6 @@ package routes
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/breno5g/rinha-back-2025/config"
@@ -10,35 +9,46 @@ import (
 	"github.com/breno5g/rinha-back-2025/internal/entity"
 	"github.com/breno5g/rinha-back-2025/internal/repository"
 	"github.com/breno5g/rinha-back-2025/internal/service"
+	routing "github.com/qiangxue/fasthttp-routing"
+	"github.com/valyala/fasthttp"
 )
 
-func Init() *http.ServeMux {
-	mux := http.NewServeMux()
+func Init() *routing.Router {
 	db := config.GetDB()
-	repository := repository.NewPaymentRepository(db)
-	service := service.NewPaymentService(repository)
-	controller := controller.NewPaymentController(service)
+	repo := repository.NewPaymentRepository(db)
+	svc := service.NewPaymentService(repo)
+	ctrl := controller.NewPaymentController(svc)
 
-	fetcher := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 5,
-			IdleConnTimeout:     30 * time.Second,
-			DisableKeepAlives:   false,
-		},
+	fetcher := &fasthttp.Client{
+		ReadTimeout:                   5 * time.Second,
+		WriteTimeout:                  5 * time.Second,
+		MaxIdleConnDuration:           1 * time.Minute,
+		NoDefaultUserAgentHeader:      true,
+		DisableHeaderNamesNormalizing: true,
+		Dial: (&fasthttp.TCPDialer{
+			Concurrency:      4096,
+			DNSCacheDuration: time.Hour,
+		}).Dial,
 	}
 
 	for i := 0; i < config.GetEnv().MaxWorkers; i++ {
-		worker := &entity.Worker{Client: db, Repo: repository, WorkerNum: i, Fetcher: fetcher}
+		worker := &entity.Worker{
+			Client:    db,
+			Repo:      repo,
+			WorkerNum: i,
+			Fetcher:   fetcher,
+		}
 		go worker.Init(context.Background())
 	}
 
-	mux.HandleFunc("/payments", controller.Create)
-	mux.HandleFunc("/payments-summary", controller.GetSummary)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+	router := routing.New()
+	router.Post("/payments", ctrl.Create)
+	router.Get("/payments-summary", ctrl.GetSummary)
+	router.Get("/health", func(c *routing.Context) error {
+		c.SetStatusCode(fasthttp.StatusOK)
+		c.SetBodyString("ok")
+		return nil
 	})
 
-	return mux
+	return router
 }

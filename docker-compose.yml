@@ -1,6 +1,6 @@
 x-build_template: &build
-  image: breno5g/rinha-2025:1.0
-  # build: .
+  # image: breno5g/rinha-2025:1.0
+  build: .
   networks:
     - backend
     - payment-processor

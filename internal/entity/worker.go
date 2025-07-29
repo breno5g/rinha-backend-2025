@@ -1,61 +1,62 @@
 package entity
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/breno5g/rinha-back-2025/config"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
+	"github.com/valyala/fasthttp"
 )
 
+var json = jsoniter.ConfigFastest
+
 type PaymentRepository interface {
-	GetAll(ctx context.Context) ([]Payment, error)
-	Save(ctx context.Context, payment Payment) error
+	SaveProcessedPayment(ctx context.Context, payment Payment) error
 }
 
 type Worker struct {
 	Client    *redis.Client
 	Repo      PaymentRepository
 	WorkerNum int
-	Fetcher   *http.Client
+	Fetcher   *fasthttp.Client
 }
 
 const (
-	retryDelay    = time.Second
-	maxRetries    = 5
-	retryInterval = 500 * time.Millisecond
+	maxRetries     = 5
+	retryInterval  = 500 * time.Millisecond
+	requestTimeout = 5 * time.Second
 )
 
 func (w *Worker) Init(ctx context.Context) {
-	logger := config.GetLogger("Payment workers")
+	logger := config.GetLogger(fmt.Sprintf("Worker-%d", w.WorkerNum))
 	processingQueue := fmt.Sprintf("payments:processing:%d", w.WorkerNum)
+	queue := "payments:queue"
 
 	for {
-		result, err := w.Client.RPopLPush(ctx, "payments:queue", processingQueue).Result()
+		result, err := w.Client.BRPopLPush(ctx, queue, processingQueue, 0).Result()
 		if err != nil {
-			if err == redis.Nil {
-				time.Sleep(1 * retryDelay)
-				continue
+			if err != context.Canceled && err != redis.Nil {
+				logger.Errorf("Redis BRPopLPush error: %v", err)
+				time.Sleep(1 * time.Second)
 			}
-			logger.Debugf("[Worker %d] Redis error: %v", w.WorkerNum, err)
-			time.Sleep(1 * retryDelay)
 			continue
 		}
+
 		var payment Payment
 		if err := json.Unmarshal([]byte(result), &payment); err != nil {
-			logger.Debugf("[Worker %d] Failed to unmarshal payment: %v", w.WorkerNum, err)
+			logger.Errorf("Failed to unmarshal payment: %v", err)
 			w.Client.LRem(ctx, processingQueue, 1, result)
 			continue
 		}
+
 		if !w.processPayment(ctx, payment) {
-			w.Client.LPush(ctx, "payments:queue", result)
-			w.Client.LRem(ctx, processingQueue, 1, result)
-			continue
+			logger.Warningf("Failed to process payment %s after all retries. Moving to dead-letter queue.", payment.CorrelationId)
+			w.Client.LPush(ctx, "payments:dead-letter", result)
 		}
+
 		w.Client.LRem(ctx, processingQueue, 1, result)
 	}
 }
@@ -81,18 +82,23 @@ func (w *Worker) processPayment(ctx context.Context, payment Payment) bool {
 }
 
 func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, processor string, payment Payment) bool {
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(payload))
-	req.Header.Set("Content-Type", "application/json")
+	req := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(req)
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(resp)
 
-	resp, err := w.Fetcher.Do(req)
-	if err != nil {
+	req.SetRequestURI(url)
+	req.Header.SetMethod(fasthttp.MethodPost)
+	req.Header.SetContentType("application/json")
+	req.SetBody(payload)
+
+	if err := w.Fetcher.DoTimeout(req, resp, requestTimeout); err != nil {
 		return false
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
 		payment.Processor = processor
-		w.Repo.Save(ctx, payment)
+		w.Repo.SaveProcessedPayment(ctx, payment)
 		return true
 	}
 	return false
