@@ -5,16 +5,17 @@ import (
 )
 
 type conf struct {
-	DBHost        string `mapstructure:"DB_HOST"`
-	DBPort        string `mapstructure:"DB_PORT"`
-	DBUser        string `mapstructure:"DB_USER"`
-	DBPassword    string `mapstructure:"DB_PASSWORD"`
-	DBName        string `mapstructure:"DB_NAME"`
-	WebServerPort string `mapstructure:"WEB_SERVER_PORT"`
+	DefaultURL  string `mapstructure:"DEFAULT_URL"`
+	FallbackURL string `mapstructure:"FALLBACK_URL"`
+	MaxWorkers  int    `mapstructure:"MAX_WORKERS"`
 }
 
 func InitEnv(path string) (*conf, error) {
-	cfg := &conf{}
+	cfg := &conf{
+		DefaultURL:  "http://localhost:8001/payments",
+		FallbackURL: "http://localhost:8002/payments",
+		MaxWorkers:  5,
+	}
 
 	viper.SetConfigName("app_config")
 	viper.SetConfigType("env")
