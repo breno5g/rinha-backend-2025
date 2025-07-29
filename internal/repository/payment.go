@@ -19,7 +19,7 @@ const (
 
 type PaymentRepository interface {
 	AddToQueue(ctx context.Context, payment []byte) error
-	SaveProcessedPayment(ctx context.Context, payment entity.Payment) error
+	SaveProcessedPayment(ctx context.Context, payment *entity.Payment) error
 	GetSummary(ctx context.Context, from, to *time.Time) (entity.Summary, error)
 }
 
@@ -35,7 +35,7 @@ func (p *paymentRepository) AddToQueue(ctx context.Context, payment []byte) erro
 	return p.db.LPush(ctx, "payments:queue", payment).Err()
 }
 
-func (p *paymentRepository) SaveProcessedPayment(ctx context.Context, payment entity.Payment) error {
+func (p *paymentRepository) SaveProcessedPayment(ctx context.Context, payment *entity.Payment) error {
 	payload, err := json.Marshal(payment)
 	if err != nil {
 		return err

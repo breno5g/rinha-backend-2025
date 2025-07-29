@@ -3,19 +3,30 @@ package entity
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/breno5g/rinha-back-2025/config"
 	"github.com/breno5g/rinha-back-2025/internal/health"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/redis/go-redis/v9"
+	"github.com/valyala/bytebufferpool"
 	"github.com/valyala/fasthttp"
 )
 
-var json = jsoniter.ConfigFastest
+var (
+	json = jsoniter.ConfigFastest
+
+	paymentPool = sync.Pool{
+		New: func() interface{} {
+			return new(Payment)
+		},
+	}
+)
 
 type PaymentRepository interface {
-	SaveProcessedPayment(ctx context.Context, payment Payment) error
+	SaveProcessedPayment(ctx context.Context, payment *Payment) error
 }
 
 type Worker struct {
@@ -24,6 +35,7 @@ type Worker struct {
 	WorkerNum     int
 	Fetcher       *fasthttp.Client
 	HealthChecker *health.HealthChecker
+	logger        *config.Logger
 }
 
 const (
@@ -33,7 +45,7 @@ const (
 )
 
 func (w *Worker) Init(ctx context.Context) {
-	logger := config.GetLogger(fmt.Sprintf("Worker-%d", w.WorkerNum))
+	w.logger = config.GetLogger(fmt.Sprintf("Worker-%d", w.WorkerNum))
 	processingQueue := fmt.Sprintf("payments:processing:%d", w.WorkerNum)
 	queue := "payments:queue"
 
@@ -41,36 +53,44 @@ func (w *Worker) Init(ctx context.Context) {
 		result, err := w.Client.BRPopLPush(ctx, queue, processingQueue, 0).Result()
 		if err != nil {
 			if err != context.Canceled && err != redis.Nil {
-				logger.Errorf("Redis BRPopLPush error: %v", err)
+				w.logger.Errorf("Redis BRPopLPush error: %v", err)
 				time.Sleep(1 * time.Second)
 			}
 			continue
 		}
 
-		var payment Payment
-		if err := json.Unmarshal([]byte(result), &payment); err != nil {
-			logger.Errorf("Failed to unmarshal payment: %v", err)
+		payment := paymentPool.Get().(*Payment)
+
+		if err := json.Unmarshal([]byte(result), payment); err != nil {
+			w.logger.Errorf("Failed to unmarshal payment: %v", err)
 			w.Client.LRem(ctx, processingQueue, 1, result)
+			paymentPool.Put(payment)
 			continue
 		}
 
 		if !w.processPayment(ctx, payment) {
-			logger.Warningf("CRITICAL: Payment %s failed on BOTH processors. Moving to dead-letter queue.", payment.CorrelationId)
+			w.logger.Warningf("CRITICAL: Payment %s failed on BOTH processors. Moving to dead-letter queue.", payment.CorrelationId)
 			w.Client.LPush(ctx, "payments:dead-letter", result)
 		}
 
 		w.Client.LRem(ctx, processingQueue, 1, result)
+		paymentPool.Put(payment)
 	}
 }
 
-func (w *Worker) processPayment(ctx context.Context, payment Payment) bool {
+func (w *Worker) processPayment(ctx context.Context, payment *Payment) bool {
 	env := config.GetEnv()
 
-	payload, _ := json.Marshal(map[string]any{
-		"correlationId": payment.CorrelationId.String(),
-		"amount":        payment.Amount,
-		"requestedAt":   payment.RequestedAt.Format(time.RFC3339Nano),
-	})
+	buf := bytebufferpool.Get()
+	buf.WriteString(`{"correlationId":"`)
+	buf.WriteString(payment.CorrelationId.String())
+	buf.WriteString(`","amount":`)
+	buf.B = strconv.AppendFloat(buf.B, payment.Amount, 'f', -1, 64)
+	buf.WriteString(`,"requestedAt":"`)
+	buf.WriteString(payment.RequestedAt.Format(time.RFC3339Nano))
+	buf.WriteString(`"}`)
+	payload := buf.Bytes()
+	defer bytebufferpool.Put(buf)
 
 	var primaryURL, secondaryURL string
 	var primaryProcessor, secondaryProcessor string
@@ -94,8 +114,7 @@ func (w *Worker) processPayment(ctx context.Context, payment Payment) bool {
 	return false
 }
 
-// attemptWithRetries é um helper que encapsula o loop de retentativas rápidas.
-func (w *Worker) attemptWithRetries(ctx context.Context, url string, payload []byte, processor string, payment Payment) bool {
+func (w *Worker) attemptWithRetries(ctx context.Context, url string, payload []byte, processor string, payment *Payment) bool {
 	for i := 0; i < fastRetryAttempts; i++ {
 		if w.tryProcessor(ctx, url, payload, processor, payment) {
 			return true
@@ -105,8 +124,7 @@ func (w *Worker) attemptWithRetries(ctx context.Context, url string, payload []b
 	return false
 }
 
-// tryProcessor realiza uma ÚNICA tentativa de chamada HTTP.
-func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, processor string, payment Payment) bool {
+func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, processor string, payment *Payment) bool {
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
 	resp := fasthttp.AcquireResponse()
@@ -124,11 +142,10 @@ func (w *Worker) tryProcessor(ctx context.Context, url string, payload []byte, p
 	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
 		payment.Processor = processor
 		if err := w.Repo.SaveProcessedPayment(ctx, payment); err != nil {
-			config.GetLogger("Worker").Errorf("CRITICAL: Failed to save processed payment %s: %v", payment.CorrelationId, err)
+			w.logger.Errorf("CRITICAL: Failed to save processed payment %s: %v", payment.CorrelationId, err)
 			return true
 		}
 		return true
 	}
-
 	return false
 }
